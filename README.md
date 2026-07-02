@@ -208,7 +208,7 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 
 ## Author
 
-**Jhoan Felipe Delgado Acevedo** — Industrial Networks & Communications Engineering Student
+**Jhoan Felipe Delgado Acevedo** — Mechatronics Engineer
 
 * LinkedIn: [Jhoan Felipe Delgado Acevedo](https://www.linkedin.com/in/jhoan-felipe-delgado-acevedo-8240a2355)
 
