@@ -136,7 +136,7 @@ The MicroPython controllers require **ulab** (a NumPy-like library for embedded)
 4. The controller will send `ref`, `yk`, `ye`, `ek`, and `u` as real-time graphs
 
 <p align="center">
-  <img src="pictures/plot_15.png" alt="Teleplot Real-Time Tracking" width="800"/>
+  <img src="pictures/plot_2.png" alt="Teleplot Real-Time Tracking" width="800"/>
 </p>
 
 ---

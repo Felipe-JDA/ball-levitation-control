@@ -60,7 +60,7 @@ All controllers feature **online system identification** — the plant model is 
 Data from the controllers is sent via UDP to Teleplot for live monitoring and tuning.
 
 <p align="center">
-  <img src="docs/pictures/plot_2.png" alt="Teleplot Real-Time Tracking" width="800"/>
+  <img src="docs/pictures/plot_1.png" alt="Teleplot Real-Time Tracking" width="800"/>
 </p>
 
 ---
