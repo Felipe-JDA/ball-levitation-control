@@ -36,6 +36,12 @@ MOSFET Module (IRF520)
 └────────────────────┘
 ```
 
+<p align="center">
+  <img src="pictures/plant_detail_2.jpg" alt="Sensor Wiring" width="300"/>
+  &nbsp;&nbsp;
+  <img src="pictures/plant_detail_1.png" alt="Fan Wiring" width="300"/>
+</p>
+
 ### Physical Setup
 
 1. Mount the **transparent tube** vertically (approximately 50 cm tall)
@@ -128,6 +134,10 @@ The MicroPython controllers require **ulab** (a NumPy-like library for embedded)
    TELEPLOT_PORT = 47269              # Teleplot port
    ```
 4. The controller will send `ref`, `yk`, `ye`, `ek`, and `u` as real-time graphs
+
+<p align="center">
+  <img src="pictures/plot_15.png" alt="Teleplot Real-Time Tracking" width="800"/>
+</p>
 
 ---
 

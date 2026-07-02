@@ -20,6 +20,10 @@
 
 This repository contains **13 different control strategies** designed to regulate the height of a levitating ball using a PWM-controlled fan. The plant uses an **HC-SR04 ultrasonic sensor** for distance measurement and an **ESP32** microcontroller for real-time processing.
 
+<p align="center">
+  <img src="docs/pictures/plant_overview.png" alt="Ball Levitation Plant" width="400"/>
+</p>
+
 The controllers are divided into two categories:
 - **Classical / Semi-Adaptive**: PID, Generalized Polynomial, and State-Space controllers with online Recursive Least Squares (RLS) estimation
 - **Intelligent**: Neural Network (RLS-based inverse model) and Fuzzy Logic controllers
@@ -43,13 +47,21 @@ All controllers feature **online system identification** — the plant model is 
 └──────────┘           └──────────┘            └──────────┘
      │                      ▲                       │
      │    Air pressure      │    Serial terminal    │
-     ▼                      │    (reference input)  │
+     ▼                      │    Serial terminal    │
 ┌──────────┐                │                       │
 │  Ball    │  Distance ─────┼───────────────────────┘
 │ (Object) │                │
 └──────────┘           Control Law
                     u(k) = f(y, ref, θ)
 ```
+
+### Real-Time Telemetry (Teleplot)
+
+Data from the controllers is sent via UDP to Teleplot for live monitoring and tuning.
+
+<p align="center">
+  <img src="docs/pictures/plot_2.png" alt="Teleplot Real-Time Tracking" width="800"/>
+</p>
 
 ---
 
