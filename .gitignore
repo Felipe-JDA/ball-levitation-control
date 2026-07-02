@@ -1,0 +1,33 @@
+# ══════════════════════════════════════════════════
+# .gitignore — Ball Levitation Control
+# ══════════════════════════════════════════════════
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# ── OS files ──
+.DS_Store
+Thumbs.db
+desktop.ini
+*.lnk
+
+# ── IDE / Editor ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.gemini/
+.micropico
+
+# ── Logs ──
+*.log

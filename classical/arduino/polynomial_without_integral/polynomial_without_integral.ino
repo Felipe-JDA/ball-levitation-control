@@ -1,0 +1,291 @@
+// ═══════════════════════════════════════════════════════════════
+// CONTROLLER: GENERALIZED POLYNOMIAL WITHOUT INTEGRAL ACTION
+// Plant: Ball levitation | Hardware: ESP32 + HC-SR04 + PWM fan
+// Platform: Arduino (ESP32)
+//
+// 3rd order model with RLS estimation. Solves the Diophantine
+// equation without integral action for faster response.
+// ═══════════════════════════════════════════════════════════════
+using namespace BLA;
+
+//  Preprocessor macros for quick configuration
+
+#define TRIG_PIN    14
+#define ECHO_PIN    13
+#define PWM_PIN     27
+#define PWM_FREQ    1000
+#define PWM_RES     8
+#define TS          100       // Sampling period
+
+//  Plant physical limits
+
+#define REF_MIN     7         
+#define REF_MAX     35        
+#define U_MIN      -35        
+#define U_MAX       35        
+#define PWM_LOW     196       
+#define PWM_HIGH    218       
+
+//  RLS Estimator
+//  RLS identifies the plant model online
+//  LAMBDA: forgetting factor
+
+
+// ORIGINAL = -0.185108, -0.548017, -0.270553, -0.009531, -0.002858, -0.004744
+// TEST = -0.831650, 0.275898, -0.444126, -0.003312, -0.001768, -0.002231
+BLA::Matrix<6>   theta  = {-0.838040, 0.004382, -0.162474, -0.001581, 0.002504, -0.001015};
+BLA::Matrix<6>   theta1 = theta;
+BLA::Matrix<6,6> P      = BLA::Eye<6,6>() * 10000000.0f;
+BLA::Matrix<6,6> Mp;
+BLA::Matrix<6>   fi     = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+const float      UMBRAL = 0.05f;
+const float      LAMBDA = 0.98f;
+int              estado = 0;   
+// mode: 0 = RLS, 1 = gradient
+
+//  Controlador polinomial sin accion integral + polos 
+
+const float POLO = 0.45f;
+BLA::Matrix<6> polos = {POLO, POLO, POLO, POLO, POLO, POLO};
+
+float p1 = 0, p2 = 0, p3 = 0;  // Coefs del polinomio P
+float l0 = 0, l1 = 0, l2 = 0;  // Coefs del polinomio L(
+
+//  Control variables
+
+float ref  = 20.0f;                                         // Desired reference
+float u    = 0.0f;                                          // Current control signal
+
+float yk_1 = 0.0f, yk_2 = 0.0f, yk_3 = 0.0f;                // Past outputs
+float uk_1 = 0.0f, uk_2 = 0.0f, uk_3 = 0.0f;                // Past controls
+float ek   = 0.0f, ek_1 = 0.0f, ek_2 = 0.0f, ek_3 = 0.0f;   // Errors
+
+//  Moving average filter
+
+const int NUM_LECTURAS = 5;
+float lecturas[NUM_LECTURAS] = {0};
+int   indiceLectura = 0;
+float suma = 0.0f;
+
+unsigned long tiempoAnterior = 0;
+
+//  Function prototypes
+
+void           inicializarFiltro();
+float          leerSensor();
+void           leerReferenceSerial();
+BLA::Matrix<7> Poly(BLA::Matrix<6> p);
+void           calcularControlador();
+float          ejecutarEstimador(float yk);
+void           ejecutarControlador(float yk, float ye);
+void           imprimirSerial(float yk, float ye);
+
+//  SETUP 
+
+void setup() {
+  Serial.begin(115200);
+  ledcAttach(PWM_PIN, PWM_FREQ, PWM_RES);
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  inicializarFiltro();
+  calcularControlador();
+  tiempoAnterior = millis();
+}
+
+//  LOOP — every TS ms: read → estimate → control
+
+void loop() {
+  unsigned long tiempoActual = millis();
+  if (tiempoActual - tiempoAnterior < TS) return;
+  tiempoAnterior = tiempoActual;
+
+  leerReferenceSerial();
+  float yk = leerSensor();
+  float ye = ejecutarEstimador(yk);
+  ejecutarControlador(yk, ye);
+}
+
+//  Fills the buffer with the first real sensor reading
+
+void inicializarFiltro() {
+  digitalWrite(TRIG_PIN, LOW);  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH); delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  long  dur  = pulseIn(ECHO_PIN, HIGH, 30000);
+  float dist = (dur == 0) ? 20.0f : dur * 0.0343f / 2.0f;
+
+  for (int i = 0; i < NUM_LECTURAS; i++) lecturas[i] = dist;
+  suma          = dist * NUM_LECTURAS;
+  indiceLectura = 0;
+
+  Serial.print("Filter initialized with: ");
+  Serial.println(dist);
+}
+
+//  Polinomio Caracteristico
+
+BLA::Matrix<7> Poly(BLA::Matrix<6> p) {
+  BLA::Matrix<7> coeffs = {1, 0, 0, 0, 0, 0, 0};
+  for (int i = 0; i < 6; i++) {
+    for (int j = 6; j > 0; j--) {
+      coeffs(j) += p(i) * coeffs(j - 1);
+    }
+  }
+  return coeffs;
+}
+
+//  Controller calculation
+
+void calcularControlador() {
+  float a1 = theta(0), a2 = theta(1), a3 = theta(2);
+  float b0 = theta(3), b1 = theta(4), b2 = theta(5);
+
+  // Matriz de Sylvester (sin acción integral)
+  BLA::Matrix<6,6> A = {
+    1,        0,        0,       0,  0,  0,
+    -1 + a1,  1,        0,       b0, 0,  0,
+    -a1 + a2, -1 + a1,  1,       b1, b0, 0,
+    -a2,       a2 - 1, -1 + a1,  b2, b1, b0,
+    0,        -a2,     -a1 + a2,  0,  b2, b1,
+    0,         0,      -a2,       0,  0,  b2
+  };
+
+  BLA::Matrix<7> alpha = Poly(polos);
+
+  BLA::Matrix<6> b_vec = {
+    alpha(1) + 1 - a1,
+    alpha(2) + a1 - a2,
+    alpha(3) + a2,
+    alpha(4),
+    alpha(5),
+    alpha(6)
+  };
+
+  BLA::Matrix<6,6> A_inv = A;
+  bool ok = BLA::Invert(A_inv);
+  if (!ok) {
+    Serial.println("ERROR: Matriz singular");
+    return;
+  }
+  BLA::Matrix<6> X = A_inv * b_vec;
+
+  p1 = X(0); p2 = X(1); p3 = X(2);
+  l0 = X(3); l1 = X(4); l2 = X(5);
+
+  Serial.print("Controlador -> p1:"); Serial.print(p1, 6);
+  Serial.print(" p2:"); Serial.print(p2, 6);
+  Serial.print(" p3:"); Serial.print(p3, 6);
+  Serial.print(" | l0:"); Serial.print(l0, 6);
+  Serial.print(" l1:"); Serial.print(l1, 6);
+  Serial.print(" l2:"); Serial.println(l2, 6);
+}
+
+//  RLS ESTIMATOR WITH FORGETTING FACTOR
+//  Allows forgetting a percentage of memory depending on control difficulty
+
+float ejecutarEstimador(float yk) {
+  fi = {-yk_1, -yk_2, -yk_3, uk_1, uk_2, uk_3};
+
+  float ye = (~fi * theta1)(0, 0);
+  float ee = yk - ye;
+
+  if (abs(ee) >= UMBRAL) {
+    estado   = 1;
+    float x1 = (~fi * fi)(0, 0);
+    float x2 = ee / ((x1 == 0) ? 0.001f : x1);
+    theta    = theta1 + fi * x2;
+    Mp       = P / LAMBDA;
+  } else {
+    estado    = 0;
+    float den = (~fi * P * fi)(0, 0);
+    theta     = theta1 + (P * fi) * (ee / (LAMBDA + den));
+    Mp        = (P - ((P * fi * ~fi * P) / (LAMBDA + den))) / LAMBDA;
+  }
+
+  theta1 = theta;
+  P      = Mp;
+  return ye;
+}
+
+
+//  Controlador polinomial sin integral + PWM constrain
+
+void ejecutarControlador(float yk, float ye) {
+  ek = ref - yk;
+
+  u = -p1*uk_1 - p2*uk_2 - p3*uk_3
+      + l0*ek_1 + l1*ek_2 + l2*ek_3;
+  u = constrain(u, U_MIN, U_MAX);
+
+  int pwm_out = map(u, U_MIN, U_MAX, PWM_LOW, PWM_HIGH);
+  pwm_out = constrain(pwm_out, 0, 255);
+  ledcWrite(PWM_PIN, pwm_out);
+
+  uk_3 = uk_2; uk_2 = uk_1; uk_1 = u;
+  ek_3 = ek_2; ek_2 = ek_1; ek_1 = ek;
+  yk_3 = yk_2; yk_2 = yk_1; yk_1 = yk;
+
+  imprimirSerial(yk, ye);
+}
+
+//  HC-SR04 SENSOR READING
+//  Limited to 4 and 40 cm for safety
+
+float leerSensor() {
+  digitalWrite(TRIG_PIN, LOW);  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH); delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  long duracion = pulseIn(ECHO_PIN, HIGH, 30000);
+  if (duracion == 0) return yk_1;
+
+  float distancia = duracion * 0.0343f / 2.0f;
+  if (distancia < 4.0f || distancia > 40.0f) return yk_1;
+
+  suma -= lecturas[indiceLectura];
+  lecturas[indiceLectura] = distancia;
+  suma += distancia;
+  indiceLectura = (indiceLectura + 1) % NUM_LECTURAS;
+  return suma / NUM_LECTURAS;
+}
+
+//  Reference reading in its own function to prevent invalid values
+
+void leerReferenceSerial() {
+  if (Serial.available() > 0) {
+    String input = Serial.readStringUntil('\n');
+    input.trim();
+    float nuevaRef = input.toFloat();
+    if (nuevaRef > REF_MIN && nuevaRef < REF_MAX) {
+      ref = nuevaRef;
+      Serial.print("New reference: "); Serial.println(ref);
+    } else {
+      Serial.print("Invalid reference. Range: ");
+      Serial.print(REF_MIN); Serial.print(" - "); Serial.println(REF_MAX);
+    }
+  }
+}
+
+//  Serial Plotter output
+
+void imprimirSerial(float yk, float ye) {
+
+  Serial.print("ref:");       Serial.print(ref);
+  Serial.print(", ye:");      Serial.print(ye);
+  Serial.print(", yk:");      Serial.print(yk);
+  Serial.print(", ek=");      Serial.print(ek);
+  Serial.print(", u=");       Serial.print(u);
+  Serial.print(", RU:");      Serial.print(ref - 2);
+  Serial.print(", RL:");      Serial.print(ref + 2);
+  Serial.print(", UL:");      Serial.print(39);
+  Serial.print(", LL:");      Serial.print(6);
+  Serial.print(", theta=");   Serial.print(theta(0), 6);
+  Serial.print(", ");         Serial.print(theta(1), 6);
+  Serial.print(", ");         Serial.print(theta(2), 6);
+  Serial.print(", ");         Serial.print(theta(3), 6);
+  Serial.print(", ");         Serial.print(theta(4), 6);
+  Serial.print(", ");         Serial.print(theta(5), 6);
+  Serial.print(", estado=");  Serial.println(estado);
+}
