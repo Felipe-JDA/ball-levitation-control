@@ -64,21 +64,21 @@ float ek   = 0.0f, ek_1 = 0.0f, ek_2 = 0.0f, ek_3 = 0.0f;   // Errors
 
 const int NUM_LECTURAS = 5;
 float lecturas[NUM_LECTURAS] = {0};
-int   indiceLectura = 0;
+int   readingIndex = 0;
 float suma = 0.0f;
 
-unsigned long tiempoAnterior = 0;
+unsigned long prevTime = 0;
 
 //  Function prototypes
 
-void           inicializarFiltro();
-float          leerSensor();
-void           leerReferenceSerial();
+void           initializeFilter();
+float          readSensor();
+void           readSerialReference();
 BLA::Matrix<7> Poly(BLA::Matrix<6> p);
-void           calcularControlador();
-float          ejecutarEstimador(float yk);
-void           ejecutarControlador(float yk, float ye);
-void           imprimirSerial(float yk, float ye);
+void           computeController();
+float          runEstimator(float yk);
+void           runController(float yk, float ye);
+void           printSerial(float yk, float ye);
 
 //  SETUP 
 
@@ -88,27 +88,27 @@ void setup() {
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
 
-  inicializarFiltro();
-  calcularControlador();
-  tiempoAnterior = millis();
+  initializeFilter();
+  computeController();
+  prevTime = millis();
 }
 
 //  LOOP — every TS ms: read → estimate → control
 
 void loop() {
-  unsigned long tiempoActual = millis();
-  if (tiempoActual - tiempoAnterior < TS) return;
-  tiempoAnterior = tiempoActual;
+  unsigned long currentTime = millis();
+  if (currentTime - prevTime < TS) return;
+  prevTime = currentTime;
 
-  leerReferenceSerial();
-  float yk = leerSensor();
-  float ye = ejecutarEstimador(yk);
-  ejecutarControlador(yk, ye);
+  readSerialReference();
+  float yk = readSensor();
+  float ye = runEstimator(yk);
+  runController(yk, ye);
 }
 
 //  Fills the buffer with the first real sensor reading
 
-void inicializarFiltro() {
+void initializeFilter() {
   digitalWrite(TRIG_PIN, LOW);  delayMicroseconds(2);
   digitalWrite(TRIG_PIN, HIGH); delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
@@ -118,7 +118,7 @@ void inicializarFiltro() {
 
   for (int i = 0; i < NUM_LECTURAS; i++) lecturas[i] = dist;
   suma          = dist * NUM_LECTURAS;
-  indiceLectura = 0;
+  readingIndex = 0;
 
   Serial.print("Filter initialized with: ");
   Serial.println(dist);
@@ -138,7 +138,7 @@ BLA::Matrix<7> Poly(BLA::Matrix<6> p) {
 
 //  Controller calculation
 
-void calcularControlador() {
+void computeController() {
   float a1 = theta(0), a2 = theta(1), a3 = theta(2);
   float b0 = theta(3), b1 = theta(4), b2 = theta(5);
 
@@ -174,7 +174,7 @@ void calcularControlador() {
   p1 = X(0); p2 = X(1); p3 = X(2);
   l0 = X(3); l1 = X(4); l2 = X(5);
 
-  Serial.print("Controlador -> p1:"); Serial.print(p1, 6);
+  Serial.print("Controller -> p1:"); Serial.print(p1, 6);
   Serial.print(" p2:"); Serial.print(p2, 6);
   Serial.print(" p3:"); Serial.print(p3, 6);
   Serial.print(" | l0:"); Serial.print(l0, 6);
@@ -185,7 +185,7 @@ void calcularControlador() {
 //  RLS ESTIMATOR WITH FORGETTING FACTOR
 //  Allows forgetting a percentage of memory depending on control difficulty
 
-float ejecutarEstimador(float yk) {
+float runEstimator(float yk) {
   fi = {-yk_1, -yk_2, -yk_3, uk_1, uk_2, uk_3};
 
   float ye = (~fi * theta1)(0, 0);
@@ -212,7 +212,7 @@ float ejecutarEstimador(float yk) {
 
 //  Controlador polinomial sin integral + PWM constrain
 
-void ejecutarControlador(float yk, float ye) {
+void runController(float yk, float ye) {
   ek = ref - yk;
 
   u = -p1*uk_1 - p2*uk_2 - p3*uk_3
@@ -227,39 +227,39 @@ void ejecutarControlador(float yk, float ye) {
   ek_3 = ek_2; ek_2 = ek_1; ek_1 = ek;
   yk_3 = yk_2; yk_2 = yk_1; yk_1 = yk;
 
-  imprimirSerial(yk, ye);
+  printSerial(yk, ye);
 }
 
 //  HC-SR04 SENSOR READING
 //  Limited to 4 and 40 cm for safety
 
-float leerSensor() {
+float readSensor() {
   digitalWrite(TRIG_PIN, LOW);  delayMicroseconds(2);
   digitalWrite(TRIG_PIN, HIGH); delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
 
-  long duracion = pulseIn(ECHO_PIN, HIGH, 30000);
-  if (duracion == 0) return yk_1;
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000);
+  if (duration == 0) return yk_1;
 
-  float distancia = duracion * 0.0343f / 2.0f;
-  if (distancia < 4.0f || distancia > 40.0f) return yk_1;
+  float distance = duration * 0.0343f / 2.0f;
+  if (distance < 4.0f || distance > 40.0f) return yk_1;
 
-  suma -= lecturas[indiceLectura];
-  lecturas[indiceLectura] = distancia;
-  suma += distancia;
-  indiceLectura = (indiceLectura + 1) % NUM_LECTURAS;
+  suma -= lecturas[readingIndex];
+  lecturas[readingIndex] = distance;
+  suma += distance;
+  readingIndex = (readingIndex + 1) % NUM_LECTURAS;
   return suma / NUM_LECTURAS;
 }
 
 //  Reference reading in its own function to prevent invalid values
 
-void leerReferenceSerial() {
+void readSerialReference() {
   if (Serial.available() > 0) {
     String input = Serial.readStringUntil('\n');
     input.trim();
-    float nuevaRef = input.toFloat();
-    if (nuevaRef > REF_MIN && nuevaRef < REF_MAX) {
-      ref = nuevaRef;
+    float newRef = input.toFloat();
+    if (newRef > REF_MIN && newRef < REF_MAX) {
+      ref = newRef;
       Serial.print("New reference: "); Serial.println(ref);
     } else {
       Serial.print("Invalid reference. Range: ");
@@ -270,7 +270,7 @@ void leerReferenceSerial() {
 
 //  Serial Plotter output
 
-void imprimirSerial(float yk, float ye) {
+void printSerial(float yk, float ye) {
 
   Serial.print("ref:");       Serial.print(ref);
   Serial.print(", ye:");      Serial.print(ye);

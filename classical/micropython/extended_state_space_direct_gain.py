@@ -43,7 +43,7 @@ P = np.eye(6) * 10000000.0
 fi = np.zeros(6)
 UMBRAL = 0.05;  LAMBDA = 0.98;  estado = 0
 
-# Controlador espacio de estados + polos + polos observadores
+# Controller espacio de estados + polos + polos observadores
 
 polo_c = 0.45;  polo_o = 0.15
 
@@ -62,10 +62,10 @@ ref = 20.0;  u = 0.0;  ek = 0.0
 yk_1 = 0.0;  yk_2 = 0.0;  yk_3 = 0.0
 uk_1 = 0.0;  uk_2 = 0.0;  uk_3 = 0.0
 
-#  Filtro de media movil
+#  Moving average filter
 
 NUM_LECTURAS = 3
-lecturas = [0.0] * NUM_LECTURAS;  indice_lectura = 0;  suma_filtro = 0.0
+readings = [0.0] * NUM_LECTURAS;  reading_index = 0;  filter_sum = 0.0
 
 #  Hardware initialization
 
@@ -99,12 +99,12 @@ def connect_wifi():
         except OSError as e:
             print("WiFi ERROR: {}".format(e))
             return False
-        intentos = 0
+        attempts = 0
         while not wlan.isconnected():
             time.sleep_ms(500)
             print(".", end="")
-            intentos += 1
-            if intentos > 20:
+            attempts += 1
+            if attempts > 20:
                 print("\nERROR: Could not connect to WiFi")
                 return False
         print()
@@ -131,38 +131,38 @@ def send_teleplot(yk, ye):
 
 #  Uses sys package for sending data through the Python terminal
 
-def leer_referencia_serial():
+def read_serial_reference():
     global ref
     if select.select([sys.stdin], [], [], 0)[0]:
         try:
-            linea = sys.stdin.readline().strip()
-            if linea:
-                nueva_ref = float(linea)
-                if REF_MIN < nueva_ref < REF_MAX:
-                    ref = nueva_ref
+            line = sys.stdin.readline().strip()
+            if line:
+                new_ref = float(line)
+                if REF_MIN < new_ref < REF_MAX:
+                    ref = new_ref
                     print(">>> New reference: {:.1f} cm".format(ref))
                 else:
                     print(">>> Valid range: {}-{} cm".format(REF_MIN, REF_MAX))
         except:
             pass
 
-# Inicializacion del filtro de media movil
+# Moving average filter initialization
 
-def inicializar_filtro():
-    global lecturas, indice_lectura, suma_filtro
+def initialize_filter():
+    global readings, reading_index, filter_sum
     trig.value(0); time.sleep_us(2)
     trig.value(1); time.sleep_us(10)
     trig.value(0)
     dur = time_pulse_us(echo, 1, 30000)
     dist = 20.0 if dur <= 0 else dur * 0.0343 / 2.0
-    lecturas = [dist] * NUM_LECTURAS
-    suma_filtro = dist * NUM_LECTURAS
-    indice_lectura = 0
-    print("Filtro:", dist, "cm")
+    readings = [dist] * NUM_LECTURAS
+    filter_sum = dist * NUM_LECTURAS
+    reading_index = 0
+    print("Filter:", dist, "cm")
 
 # Calculo del controlardor con ackerman + observador
 
-def calcular_controlador():
+def compute_controller():
     global Kx, Ki, N_bar, F_obs, Gy, Gu
 
     a1, a2, a3 = float(theta[0]), float(theta[1]), float(theta[2])
@@ -223,7 +223,7 @@ def calcular_controlador():
 
 # Estimador RLS
 
-def ejecutar_estimador(yk):
+def run_estimator(yk):
     global theta, theta1, P, fi, estado
     fi = np.array([-yk_1, -yk_2, -yk_3, uk_1, uk_2, uk_3])
     ye = float(np.dot(fi, theta1))
@@ -263,9 +263,9 @@ def ejecutar_estimador(yk):
     theta1 = np.array(theta)
     return ye
 
-# Controlador u
+# Controller u
 
-def ejecutar_controlador(yk, ye):
+def run_controller(yk, ye):
     global u, ek, x_i
     global uk_1, uk_2, uk_3, yk_1, yk_2, yk_3, z_obs
 
@@ -287,12 +287,12 @@ def ejecutar_controlador(yk, ye):
     z_obs = np.dot(F_obs, z_obs) + Gy * yk + Gu * u
     uk_3 = uk_2;  uk_2 = uk_1;  uk_1 = u
     yk_3 = yk_2;  yk_2 = yk_1;  yk_1 = yk
-    imprimir_serial(yk, ye)
+    print_serial(yk, ye)
 
 # Sensor reading
 
-def leer_sensor():
-    global suma_filtro, indice_lectura
+def read_sensor():
+    global filter_sum, reading_index
     trig.value(0); time.sleep_us(2)
     trig.value(1); time.sleep_us(10)
     trig.value(0)
@@ -300,15 +300,15 @@ def leer_sensor():
     if dur <= 0: return yk_1
     d = dur * 0.0343 / 2.0
     if d < 4.0 or d > 40.0: return yk_1
-    suma_filtro -= lecturas[indice_lectura]
-    lecturas[indice_lectura] = d
-    suma_filtro += d
-    indice_lectura = (indice_lectura + 1) % NUM_LECTURAS
-    return suma_filtro / NUM_LECTURAS
+    filter_sum -= readings[reading_index]
+    readings[reading_index] = d
+    filter_sum += d
+    reading_index = (reading_index + 1) % NUM_LECTURAS
+    return filter_sum / NUM_LECTURAS
 
 # Serial output + Teleplot
 
-def imprimir_serial(yk, ye):
+def print_serial(yk, ye):
     print("ref:{:.1f} yk:{:.2f} ye:{:.2f} ek:{:.2f} u:{:.2f} Nbar:{:.4f} xi:{:.2f} estado:{} "
           "theta:[{:.6f},{:.6f},{:.6f},{:.6f},{:.6f},{:.6f}]".format(
         ref, yk, ye, ek, u, N_bar, x_i, estado,
@@ -330,8 +330,8 @@ def main():
     else:
         print("No Teleplot (no WiFi)")
 
-    inicializar_filtro()
-    calcular_controlador()
+    initialize_filter()
+    compute_controller()
     print("-" * 50)
     print("Type a number in the terminal to change reference")
     print("-" * 50)
@@ -341,10 +341,10 @@ def main():
         t = time.ticks_ms()
         if time.ticks_diff(t, t_ant) < TS: continue
         t_ant = t
-        leer_referencia_serial()
-        yk = leer_sensor()
-        ye = ejecutar_estimador(yk)
-        ejecutar_controlador(yk, ye)
+        read_serial_reference()
+        yk = read_sensor()
+        ye = run_estimator(yk)
+        run_controller(yk, ye)
 
 if __name__ == "__main__":
     main()

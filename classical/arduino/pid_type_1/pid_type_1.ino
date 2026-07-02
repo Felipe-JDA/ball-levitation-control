@@ -63,20 +63,20 @@ float ek_2 = 0.0f;     // e(k-2)
 
 const int NUM_LECTURAS = 3;
 float lecturas[NUM_LECTURAS] = {0};
-int   indiceLectura = 0;
+int   readingIndex = 0;
 float suma = 0.0f;
 
-unsigned long tiempoAnterior = 0;
+unsigned long prevTime = 0;
 
 //  Function prototypes
 
-void  inicializarFiltro();
-float leerSensor();
-void  leerReferenceSerial();
-void  calcularCoeficientes(float a1, float b0);
-float ejecutarEstimador(float yk);
-void  ejecutarControlador(float yk, float ye);
-void  imprimirSerial(float yk, float ye);
+void  initializeFilter();
+float readSensor();
+void  readSerialReference();
+void  computeCoefficients(float a1, float b0);
+float runEstimator(float yk);
+void  runController(float yk, float ye);
+void  printSerial(float yk, float ye);
 
 //  SETUP 
 
@@ -86,27 +86,27 @@ void setup() {
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
 
-  inicializarFiltro();
-  calcularCoeficientes(theta(0), theta(1));
-  tiempoAnterior = millis();
+  initializeFilter();
+  computeCoefficients(theta(0), theta(1));
+  prevTime = millis();
 }
 
 //  LOOP — every TS ms: read → estimate → control
 
 void loop() {
-  unsigned long tiempoActual = millis();
-  if (tiempoActual - tiempoAnterior < TS) return;
-  tiempoAnterior = tiempoActual;
+  unsigned long currentTime = millis();
+  if (currentTime - prevTime < TS) return;
+  prevTime = currentTime;
 
-  leerReferenceSerial();
-  float yk = leerSensor();
-  float ye = ejecutarEstimador(yk);
-  ejecutarControlador(yk, ye);
+  readSerialReference();
+  float yk = readSensor();
+  float ye = runEstimator(yk);
+  runController(yk, ye);
 }
 
 //  Fills the buffer with the first real sensor reading
 
-void inicializarFiltro() {
+void initializeFilter() {
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
   digitalWrite(TRIG_PIN, HIGH);
@@ -118,7 +118,7 @@ void inicializarFiltro() {
 
   for (int i = 0; i < NUM_LECTURAS; i++) lecturas[i] = dist;
   suma          = dist * NUM_LECTURAS;
-  indiceLectura = 0;
+  readingIndex = 0;
 
   Serial.print("Filter initialized with: ");
   Serial.println(dist);
@@ -126,7 +126,7 @@ void inicializarFiltro() {
 
 //  Coefficient calculation
 
-void calcularCoeficientes(float a1, float b0) {
+void computeCoefficients(float a1, float b0) {
   float p1 = POLO, p2 = POLO, p3 = POLO;
   float pol2 = -(p1 + p2 + p3);
   float pol3 =  (p1*p2 + p1*p3 + p2*p3);
@@ -144,7 +144,7 @@ void calcularCoeficientes(float a1, float b0) {
 //  RLS ESTIMATOR WITH FORGETTING FACTOR
 //  Allows forgetting a percentage of memory depending on control difficulty
 
-float ejecutarEstimador(float yk) {
+float runEstimator(float yk) {
   fi = {-yk_1, uk_1};
 
   float ye = (~fi * theta1)(0, 0);     // Prediction
@@ -170,7 +170,7 @@ float ejecutarEstimador(float yk) {
 
 // PID Type 1 control + PWM with constrain
 
-void ejecutarControlador(float yk, float ye) {
+void runController(float yk, float ye) {
   ek = ref - yk;
 
   u = uk_1 + c0*ek + c1*ek_1 + c2*ek_2;
@@ -183,39 +183,39 @@ void ejecutarControlador(float yk, float ye) {
   uk_1 = u;   yk_1 = yk;
   ek_2 = ek_1; ek_1 = ek;
 
-  imprimirSerial(yk, ye);
+  printSerial(yk, ye);
 }
 
 //  HC-SR04 SENSOR READING
 //  Limited to 4 and 40 cm for safety
 
-float leerSensor() {
+float readSensor() {
   digitalWrite(TRIG_PIN, LOW);  delayMicroseconds(2);
   digitalWrite(TRIG_PIN, HIGH); delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
 
-  long duracion = pulseIn(ECHO_PIN, HIGH, 30000);
-  if (duracion == 0) return yk_1;
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000);
+  if (duration == 0) return yk_1;
 
-  float distancia = duracion * 0.0343f / 2.0f;
-  if (distancia < 4.0f || distancia > 40.0f) return yk_1;
+  float distance = duration * 0.0343f / 2.0f;
+  if (distance < 4.0f || distance > 40.0f) return yk_1;
 
-  suma -= lecturas[indiceLectura];
-  lecturas[indiceLectura] = distancia;
-  suma += distancia;
-  indiceLectura = (indiceLectura + 1) % NUM_LECTURAS;
+  suma -= lecturas[readingIndex];
+  lecturas[readingIndex] = distance;
+  suma += distance;
+  readingIndex = (readingIndex + 1) % NUM_LECTURAS;
   return suma / NUM_LECTURAS;
 }
 
 //  Reference reading in its own function to prevent invalid values
 
-void leerReferenceSerial() {
+void readSerialReference() {
   if (Serial.available() > 0) {
     String input = Serial.readStringUntil('\n');
     input.trim();
-    float nuevaRef = input.toFloat();
-    if (nuevaRef > REF_MIN && nuevaRef < REF_MAX) {
-      ref = nuevaRef;
+    float newRef = input.toFloat();
+    if (newRef > REF_MIN && newRef < REF_MAX) {
+      ref = newRef;
       Serial.print("New reference: "); Serial.println(ref);
     } else {
       Serial.print("Invalid reference. Range: ");
@@ -226,7 +226,7 @@ void leerReferenceSerial() {
 
 //  Serial Plotter output
 
-void imprimirSerial(float yk, float ye) {
+void printSerial(float yk, float ye) {
 
   Serial.print("ref:");       Serial.print(ref);
   Serial.print(", ye:");      Serial.print(ye);
